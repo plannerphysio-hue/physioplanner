@@ -3,17 +3,11 @@
 import { useState, useRef, useEffect } from "react";
 import Papa from "papaparse";
 import "@/lib/windowStorage";
+import { getSupabaseClient } from "@/lib/supabase/client";
 
 const ORANGE = "#E8670A";
 const DARK = "#16202e";
 const GRAY = "#f4f4f4";
-
-/* ── ACESSO DE ADMINISTRADOR (camada de dissuasão — não é segurança real) ──── */
-// AVISO: este código corre no cliente e é visível a quem inspecionar a página.
-// Esta camada só impede acesso acidental. Segurança real requer verificação
-// do lado do servidor (a implementar com Supabase).
-const ADMIN_EMAIL="plannerphysio@gmail.com";
-const ADMIN_PASSPHRASE="V1b3c0d1ngrules<3";
 
 /* ── i18n — Português (padrão) e Inglês ──────────────────────────────────── */
 async function loadLang(){
@@ -398,66 +392,56 @@ function PMIDBadge({state}){
   );
 }
 
-/* ── AUTH (demo local — em produção usar Firebase/Supabase/Auth0) ─────────── */
-async function loadUsers(){
-  try{ const r=await window.storage.get("physioplanner_users"); return r?JSON.parse(r.value):{}; }
-  catch(e){ return {}; }
-}
-async function saveUsers(users){
-  try{ await window.storage.set("physioplanner_users",JSON.stringify(users)); }catch(e){}
-}
-async function loadSession(){
-  try{ const r=await window.storage.get("physioplanner_session"); return r?JSON.parse(r.value):null; }
-  catch(e){ return null; }
-}
-async function saveSession(s){
-  try{ if(s) await window.storage.set("physioplanner_session",JSON.stringify(s)); else await window.storage.delete("physioplanner_session"); }catch(e){}
-}
-// simple hash (NOT secure — demo only)
-function hashPw(pw){ let h=0; for(let i=0;i<pw.length;i++){h=((h<<5)-h+pw.charCodeAt(i))|0;} return String(h); }
-
-/* ── PLAN HISTORY (local — pronto para migrar para Supabase) ──────────────── */
-// Estrutura preparada para Supabase: table "plans" { id, user_email, created_at, patient_data, objetivos, result }
-async function loadHistory(email){
-  if(!email) return [];
-  try{ const r=await window.storage.get(`physioplanner_history_${email}`); return r?JSON.parse(r.value):[]; }
-  catch(e){ return []; }
-}
-async function saveHistory(email,plans){
-  if(!email) return;
-  try{ await window.storage.set(`physioplanner_history_${email}`,JSON.stringify(plans)); }catch(e){}
-}
-async function addPlanToHistory(email,plan){
-  const hist=await loadHistory(email);
-  const entry={
-    id:Date.now(),
-    created_at:new Date().toISOString(),
-    patient_data:plan.patientData,
-    objetivos:plan.objetivos,
-    result:plan.result,
-  };
-  const updated=[entry,...hist].slice(0,100); // keep last 100
-  await saveHistory(email,updated);
-  return entry;
-}
-async function deletePlanFromHistory(email,id){
-  const hist=await loadHistory(email);
-  const updated=hist.filter(p=>p.id!==id);
-  await saveHistory(email,updated);
-  return updated;
+/* ── AUTH (Supabase Auth — email/password) ─────────────────────────────────── */
+async function loadUserWithProfile(){
+  const supabase=getSupabaseClient();
+  const {data:{user:authUser}}=await supabase.auth.getUser();
+  if(!authUser) return null;
+  const {data:profile}=await supabase.from("profiles").select("name,is_admin").eq("id",authUser.id).single();
+  return {id:authUser.id,email:authUser.email,name:profile?.name||authUser.email.split("@")[0],is_admin:!!profile?.is_admin};
 }
 
-/* ── BANCO DE EXERCÍCIOS (Cloudinary + CSV) ────────────────────────────────── */
+/* ── PLAN HISTORY (tabela "plans" no Supabase, com RLS por user_id) ────────── */
+async function loadHistory(userId){
+  if(!userId) return [];
+  const supabase=getSupabaseClient();
+  const {data,error}=await supabase.from("plans").select("*").eq("user_id",userId).order("created_at",{ascending:false}).limit(100);
+  if(error) return [];
+  return data.map(p=>({id:p.id,created_at:p.created_at,patient_data:p.patient_data,objetivos:p.objetivos,result:p.result}));
+}
+async function addPlanToHistory(userId,plan){
+  const supabase=getSupabaseClient();
+  const {data,error}=await supabase.from("plans").insert({
+    user_id:userId,patient_data:plan.patientData,objetivos:plan.objetivos,result:plan.result,
+  }).select().single();
+  if(error) return null;
+  return {id:data.id,created_at:data.created_at,patient_data:data.patient_data,objetivos:data.objetivos,result:data.result};
+}
+async function deletePlanFromHistory(userId,id){
+  const supabase=getSupabaseClient();
+  await supabase.from("plans").delete().eq("id",id).eq("user_id",userId);
+  return loadHistory(userId);
+}
+
+/* ── BANCO DE EXERCÍCIOS (tabela "exercise_library" no Supabase) ──────────── */
 // Estrutura de cada linha esperada:
 // Nome canónico | Sinónimos / variações | Categoria / zona corporal | Link da imagem |
 // Link do vídeo | Instrução curta padronizada | Tipo de exercício | Patologias associadas comuns | Fonte clínica principal
 
 async function loadExerciseLibrary(){
-  try{ const r=await window.storage.get("exercise_library",true); return r?JSON.parse(r.value):[]; }
-  catch(e){ return []; }
+  const supabase=getSupabaseClient();
+  const {data,error}=await supabase.from("exercise_library").select("*").order("nome");
+  if(error) return [];
+  return data.map(e=>({nome:e.nome,sinonimos:e.sinonimos||[],categoria:e.categoria,imagem:e.imagem,video:e.video,instrucao:e.instrucao,tipo:e.tipo,patologias:e.patologias,fonte:e.fonte}));
 }
 async function saveExerciseLibrary(list){
-  try{ await window.storage.set("exercise_library",JSON.stringify(list),true); }catch(e){}
+  const supabase=getSupabaseClient();
+  const {data:existing}=await supabase.from("exercise_library").select("id");
+  if(existing?.length) await supabase.from("exercise_library").delete().in("id",existing.map(r=>r.id));
+  if(list.length===0) return;
+  await supabase.from("exercise_library").insert(list.map(e=>({
+    nome:e.nome,sinonimos:e.sinonimos,categoria:e.categoria,imagem:e.imagem,video:e.video,instrucao:e.instrucao,tipo:e.tipo,patologias:e.patologias,fonte:e.fonte,
+  })));
 }
 
 function normalizeText(s){
@@ -548,33 +532,21 @@ function AuthModal({mode,onClose,onAuth,t,lang}){
     if(!/^[^@]+@[^@]+\.[^@]+$/.test(email)){setErr(lang==="en"?"Invalid email.":"Email inválido.");return;}
     if(tab==="register"&&pw.length<6){setErr(lang==="en"?"Password must be at least 6 characters.":"A password deve ter pelo menos 6 caracteres.");return;}
     setBusy(true);
-    const users=await loadUsers();
+    const supabase=getSupabaseClient();
     if(tab==="register"){
-      if(users[email]){setErr(lang==="en"?"An account with this email already exists.":"Já existe uma conta com este email.");setBusy(false);return;}
-      users[email]={email,name:name||email.split("@")[0],pw:hashPw(pw),provider:"email"};
-      await saveUsers(users);
-      const sess={email,name:users[email].name,provider:"email"};
-      await saveSession(sess); onAuth(sess);
+      const {data,error}=await supabase.auth.signUp({email,password:pw,options:{data:{name:name||email.split("@")[0]}}});
+      if(error){setErr(error.message);setBusy(false);return;}
+      if(!data.session){
+        setErr(lang==="en"?"Check your email to confirm your account, then log in.":"Confirma a tua conta pelo email recebido e depois entra.");
+        setBusy(false);
+        return;
+      }
+      onAuth();
     } else {
-      const u=users[email];
-      if(!u){setErr(lang==="en"?"Account not found. Sign up first.":"Conta não encontrada. Regista-te primeiro.");setBusy(false);return;}
-      if(u.provider==="google"){setErr(lang==="en"?"This account uses Google. Log in with Google.":"Esta conta usa Google. Entra com Google.");setBusy(false);return;}
-      if(u.pw!==hashPw(pw)){setErr(lang==="en"?"Incorrect password.":"Password incorreta.");setBusy(false);return;}
-      const sess={email,name:u.name,provider:"email"};
-      await saveSession(sess); onAuth(sess);
+      const {error}=await supabase.auth.signInWithPassword({email,password:pw});
+      if(error){setErr(lang==="en"?"Incorrect email or password.":"Email ou password incorretos.");setBusy(false);return;}
+      onAuth();
     }
-    setBusy(false);
-  };
-
-  const googleAuth=async()=>{
-    setBusy(true); setErr("");
-    // DEMO: simula login Google. Em produção, integrar Google OAuth real.
-    const demoEmail="utilizador.google@gmail.com";
-    const users=await loadUsers();
-    if(!users[demoEmail]) users[demoEmail]={email:demoEmail,name:lang==="en"?"Google User":"Utilizador Google",provider:"google"};
-    await saveUsers(users);
-    const sess={email:demoEmail,name:lang==="en"?"Google User":"Utilizador Google",provider:"google"};
-    await saveSession(sess); onAuth(sess);
     setBusy(false);
   };
 
@@ -588,17 +560,6 @@ function AuthModal({mode,onClose,onAuth,t,lang}){
           ))}
         </div>
 
-        <button onClick={googleAuth} disabled={busy} style={{width:"100%",display:"flex",alignItems:"center",justifyContent:"center",gap:10,padding:"10px 0",border:"1px solid #ddd",borderRadius:10,background:"#fff",fontSize:13,fontWeight:600,cursor:"pointer",marginBottom:14}}>
-          <svg width="18" height="18" viewBox="0 0 48 48"><path fill="#FFC107" d="M43.6 20.5H42V20H24v8h11.3c-1.6 4.7-6.1 8-11.3 8-6.6 0-12-5.4-12-12s5.4-12 12-12c3.1 0 5.8 1.1 7.9 3l5.7-5.7C34 6.5 29.3 4 24 4 12.9 4 4 12.9 4 24s8.9 20 20 20 20-8.9 20-20c0-1.3-.1-2.3-.4-3.5z"/><path fill="#FF3D00" d="M6.3 14.7l6.6 4.8C14.7 16 19 13 24 13c3.1 0 5.8 1.1 7.9 3l5.7-5.7C34 6.5 29.3 4 24 4 16.3 4 9.7 8.3 6.3 14.7z"/><path fill="#4CAF50" d="M24 44c5.2 0 9.9-2 13.4-5.2l-6.2-5.2c-2 1.5-4.5 2.4-7.2 2.4-5.2 0-9.6-3.3-11.3-7.9l-6.5 5C9.6 39.6 16.2 44 24 44z"/><path fill="#1976D2" d="M43.6 20.5H42V20H24v8h11.3c-.8 2.2-2.2 4.2-4.1 5.6l6.2 5.2C42.6 35.3 44 30 44 24c0-1.3-.1-2.3-.4-3.5z"/></svg>
-          {lang==="en"?"Continue with Google":"Continuar com Google"}
-        </button>
-
-        <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:14}}>
-          <div style={{flex:1,height:1,background:"#eee"}}/>
-          <span style={{fontSize:11,color:"#aaa"}}>{lang==="en"?"or with email":"ou com email"}</span>
-          <div style={{flex:1,height:1,background:"#eee"}}/>
-        </div>
-
         {tab==="register"&&(
           <div style={{marginBottom:10}}><Label>{lang==="en"?"Name":"Nome"}</Label><Input value={name} onChange={e=>setName(e.target.value)} placeholder={lang==="en"?"Your name":"O teu nome"}/></div>
         )}
@@ -609,7 +570,7 @@ function AuthModal({mode,onClose,onAuth,t,lang}){
         <button onClick={submit} disabled={busy} style={{width:"100%",background:ORANGE,color:"#fff",border:"none",borderRadius:10,padding:"11px 0",fontSize:14,fontWeight:700,cursor:busy?"wait":"pointer"}}>
           {busy?(lang==="en"?"Processing…":"A processar…"):tab==="register"?(lang==="en"?"Create account":"Criar conta"):t("login")}
         </button>
-        <p style={{fontSize:10,color:"#bbb",textAlign:"center",marginTop:12,lineHeight:1.4}}>{lang==="en"?"⚠️ Demo: accounts are stored locally in this browser. For production, integrate secure authentication (Firebase, Supabase or Auth0).":"⚠️ Demonstração: as contas são guardadas localmente neste browser. Para produção, integrar autenticação segura (Firebase, Supabase ou Auth0)."}</p>
+        <p style={{fontSize:10,color:"#bbb",textAlign:"center",marginTop:12,lineHeight:1.4}}>{lang==="en"?"Accounts and passwords are managed securely by Supabase Auth.":"As contas e passwords são geridas de forma segura pelo Supabase Auth."}</p>
       </div>
     </div>
   );
@@ -697,11 +658,15 @@ function ExerciseLibraryPanel({library,onImport,onClear,t,lang}) {
     setBusy(false);
   };
 
-  const handleFile=(e)=>{
+  const handleFile=async(e)=>{
     const f=e.target.files[0]; if(!f) return;
-    const reader=new FileReader();
-    reader.onload=ev=>doImport(ev.target.result);
-    reader.readAsText(f,"utf-8");
+    const buf=await f.arrayBuffer();
+    // Exports do Excel em PT muitas vezes vêm em Windows-1252/ISO-8859-1, não UTF-8.
+    // Tenta decodificar como UTF-8 estrito; se falhar, cai para Windows-1252.
+    let text;
+    try{ text=new TextDecoder("utf-8",{fatal:true}).decode(buf); }
+    catch(err){ text=new TextDecoder("windows-1252").decode(buf); }
+    doImport(text);
     fileRef.current.value="";
   };
 
@@ -889,7 +854,7 @@ function HistoryView({user,onOpenPlan,onRequireLogin,t,lang}) {
 
   useEffect(()=>{
     if(!user)return;
-    loadHistory(user.email).then(h=>{setHistory(h);setLoading(false);});
+    loadHistory(user.id).then(h=>{setHistory(h);setLoading(false);});
   },[user]);
 
   if(!user){
@@ -916,7 +881,7 @@ function HistoryView({user,onOpenPlan,onRequireLogin,t,lang}) {
   }
 
   const del=async(id)=>{
-    const updated=await deletePlanFromHistory(user.email,id);
+    const updated=await deletePlanFromHistory(user.id,id);
     setHistory(updated);
   };
 
@@ -1098,7 +1063,7 @@ function ResultView({result:initialResult,onBack,patientData,objetivos,guideline
   const handleSave=async()=>{
     if(!user){ onRequireLogin&&onRequireLogin(); return; }
     setSaveState("saving");
-    await addPlanToHistory(user.email,{patientData,objetivos,result});
+    await addPlanToHistory(user.id,{patientData,objetivos,result});
     setSaveState("saved");
     onSaved&&onSaved();
     setTimeout(()=>setSaveState("idle"),2500);
@@ -1621,35 +1586,44 @@ export default function App() {
   const [authModal,setAuthModal]=useState(null); // null | "login" | "register"
   const [userMenu,setUserMenu]=useState(false);
   const [exerciseLibrary,setExerciseLibrary]=useState([]);
-  const [adminUnlocked,setAdminUnlocked]=useState(false);
   const [adminSubTab,setAdminSubTab]=useState("guidelines");
-  const [adminPassInput,setAdminPassInput]=useState("");
-  const [adminPassError,setAdminPassError]=useState("");
   const [lang,setLang]=useState("pt");
   useEffect(()=>{ loadLang().then(setLang); },[]);
   const changeLang=(l)=>{ setLang(l); saveLang(l); };
   const t=(key)=>tr(lang,key);
 
-  const isAdminUser = !!user && user.email && user.email.toLowerCase()===ADMIN_EMAIL.toLowerCase();
+  const isAdminUser = !!user?.is_admin;
 
-  const tryUnlockAdmin=()=>{
-    if(adminPassInput===ADMIN_PASSPHRASE){
-      setAdminUnlocked(true);
-      setAdminPassError("");
-      setAdminPassInput("");
-    } else {
-      setAdminPassError("Palavra-passe incorreta.");
-    }
-  };
-
-  // Restore session + exercise library on mount
-  useEffect(()=>{ loadSession().then(s=>{ if(s) setUser(s); }); },[]);
+  // Sessão (Supabase Auth) + biblioteca de exercícios + guidelines
+  useEffect(()=>{
+    const supabase=getSupabaseClient();
+    loadUserWithProfile().then(setUser);
+    const {data:sub}=supabase.auth.onAuthStateChange(()=>{ loadUserWithProfile().then(setUser); });
+    return ()=>sub.subscription.unsubscribe();
+  },[]);
   useEffect(()=>{ loadExerciseLibrary().then(setExerciseLibrary); },[]);
+  useEffect(()=>{
+    const supabase=getSupabaseClient();
+    supabase.from("custom_guidelines").select("*").order("created_at").then(({data})=>{
+      if(data) setGuidelines(data.map(g=>({id:g.id,name:g.name,tag:g.tag,fileName:g.file_name})));
+    });
+  },[]);
+
+  const addGuideline=async(g)=>{
+    const supabase=getSupabaseClient();
+    const {data,error}=await supabase.from("custom_guidelines").insert({name:g.name,tag:g.tag,file_name:g.fileName,created_by:user?.id}).select().single();
+    if(!error) setGuidelines(p=>[...p,{id:data.id,name:data.name,tag:data.tag,fileName:data.file_name}]);
+  };
+  const removeGuideline=async(id)=>{
+    const supabase=getSupabaseClient();
+    await supabase.from("custom_guidelines").delete().eq("id",id);
+    setGuidelines(p=>p.filter(g=>g.id!==id));
+  };
 
   const importExercises=async(parsed)=>{
     // Substitui a biblioteca (novo import = nova versão completa)
-    setExerciseLibrary(parsed);
     await saveExerciseLibrary(parsed);
+    setExerciseLibrary(await loadExerciseLibrary());
   };
   const clearExercises=async()=>{
     setExerciseLibrary([]);
@@ -1746,11 +1720,11 @@ JSON EXATO:
   const reset=()=>{setStep("form");setResult(null);setFormError("");setObjetivos([]);};
   const patientData={...form,patologiaFinal};
 
-  const logout=async()=>{ await saveSession(null); setUser(null); setUserMenu(false); setAdminUnlocked(false); setTab("prescricao"); };
+  const logout=async()=>{ await getSupabaseClient().auth.signOut(); setUser(null); setUserMenu(false); setTab("prescricao"); };
 
   return (
     <div style={{maxWidth:780,margin:"0 auto",fontFamily:"Arial,sans-serif",paddingBottom:40,background:"#fff",position:"relative"}}>
-      {authModal&&<AuthModal mode={authModal} onClose={()=>setAuthModal(null)} onAuth={s=>{setUser(s);setAuthModal(null);}} t={t} lang={lang}/>}
+      {authModal&&<AuthModal mode={authModal} onClose={()=>setAuthModal(null)} onAuth={()=>setAuthModal(null)} t={t} lang={lang}/>}
 
       {/* ── HEADER ── */}
       <div style={{background:DARK,padding:"12px 20px",display:"flex",alignItems:"center",justifyContent:"space-between",flexWrap:"wrap",gap:10}}>
@@ -1774,7 +1748,6 @@ JSON EXATO:
                   <div style={{padding:"6px 10px",borderBottom:"1px solid #eee",marginBottom:4}}>
                     <div style={{fontSize:12,fontWeight:700}}>{user.name}</div>
                     <div style={{fontSize:11,color:"#888"}}>{user.email}</div>
-                    <div style={{fontSize:9,color:ORANGE,marginTop:2}}>{user.provider==="google"?"🔵 Google":"✉️ Email"}</div>
                   </div>
                   <button onClick={logout} style={{width:"100%",textAlign:"left",background:"none",border:"none",padding:"7px 10px",fontSize:12,color:"#c0392b",cursor:"pointer",borderRadius:6}}>{t("logout")}</button>
                 </div>
@@ -1793,33 +1766,15 @@ JSON EXATO:
 
       <div style={{padding:"18px 16px"}}>
         {tab==="admin"&&isAdminUser&&(
-          !adminUnlocked ? (
-            <div style={{maxWidth:340,margin:"30px auto",textAlign:"center"}}>
-              <div style={{fontSize:32,marginBottom:10}}>🔐</div>
-              <div style={{fontWeight:700,fontSize:15,marginBottom:6}}>{t("adminArea")}</div>
-              <p style={{fontSize:12,color:"#888",marginBottom:14}}>{t("adminSub")}</p>
-              <input type="password" value={adminPassInput} onChange={e=>setAdminPassInput(e.target.value)}
-                onKeyDown={e=>e.key==="Enter"&&tryUnlockAdmin()}
-                placeholder={t("fraseP")} autoFocus
-                style={{width:"100%",padding:"9px 12px",borderRadius:8,border:"1px solid #ddd",fontSize:13,boxSizing:"border-box",marginBottom:8,textAlign:"center"}}/>
-              {adminPassError&&<p style={{color:"#c0392b",fontSize:12,marginBottom:8}}>{adminPassError}</p>}
-              <button onClick={tryUnlockAdmin} style={{background:ORANGE,color:"#fff",border:"none",borderRadius:10,padding:"10px 0",fontSize:13,fontWeight:700,cursor:"pointer",width:"100%"}}>{t("desbloquear")}</button>
-              <p style={{fontSize:10,color:"#bbb",marginTop:14,lineHeight:1.5}}>{lang==="en"?"⚠️ This is a deterrent layer, not real security — the code runs in the browser. Do not enter sensitive data relying on this alone.":"⚠️ Esta é uma camada de dissuasão, não segurança real — o código corre no browser. Não introduzas dados sensíveis a confiar apenas nisto."}</p>
-            </div>
-          ) : (
             <div>
-              <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:12}}>
-                <div style={{display:"flex",gap:6}}>
-                  {[["guidelines","📁 Guidelines"],["exercicios",lang==="en"?"🗂️ Exercise Bank":"🗂️ Banco de Exercícios"]].map(([k,l])=>(
-                    <button key={k} onClick={()=>setAdminSubTab(k)} style={{padding:"7px 14px",border:"none",borderRadius:7,background:adminSubTab===k?DARK:GRAY,color:adminSubTab===k?"#fff":"#555",fontWeight:600,cursor:"pointer",fontSize:12}}>{l}</button>
-                  ))}
-                </div>
-                <button onClick={()=>setAdminUnlocked(false)} style={{background:"none",border:"1px solid #ddd",borderRadius:7,padding:"6px 12px",fontSize:11,color:"#888",cursor:"pointer"}}>{t("bloquear")}</button>
+              <div style={{display:"flex",gap:6,marginBottom:12}}>
+                {[["guidelines","📁 Guidelines"],["exercicios",lang==="en"?"🗂️ Exercise Bank":"🗂️ Banco de Exercícios"]].map(([k,l])=>(
+                  <button key={k} onClick={()=>setAdminSubTab(k)} style={{padding:"7px 14px",border:"none",borderRadius:7,background:adminSubTab===k?DARK:GRAY,color:adminSubTab===k?"#fff":"#555",fontWeight:600,cursor:"pointer",fontSize:12}}>{l}</button>
+                ))}
               </div>
-              {adminSubTab==="guidelines"&&<GuidelinesLibrary guidelines={guidelines} onAdd={g=>setGuidelines(p=>[...p,g])} onRemove={id=>setGuidelines(p=>p.filter(g=>g.id!==id))} t={t}/>}
+              {adminSubTab==="guidelines"&&<GuidelinesLibrary guidelines={guidelines} onAdd={addGuideline} onRemove={removeGuideline} t={t}/>}
               {adminSubTab==="exercicios"&&<ExerciseLibraryPanel library={exerciseLibrary} onImport={importExercises} onClear={clearExercises} t={t} lang={lang}/>}
             </div>
-          )
         )}
 
         {tab==="historico"&&(
