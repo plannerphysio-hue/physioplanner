@@ -283,36 +283,6 @@ function SmartImage({src,fallbackSrc,alt,size=70,rounded=8}) {
     })}/>;
 }
 
-/* ── Repara aspas duplas a meio de valores de texto no JSON ───────────────── */
-function repairJsonQuotes(s){
-  // Percorre o JSON carácter a carácter. Quando está dentro de uma string,
-  // se encontrar uma aspa dupla que NÃO é seguida por um delimitador estrutural
-  // (: , } ] ou fim), assume que é uma aspa interna e escapa-a.
-  let out="";
-  let inStr=false;
-  for(let i=0;i<s.length;i++){
-    const ch=s[i];
-    const prev=s[i-1];
-    if(ch==='"'&&prev!=="\\"){
-      if(!inStr){ inStr=true; out+=ch; continue; }
-      // estamos dentro de uma string e encontrámos uma aspa
-      // olhar para o próximo carácter não-espaço
-      let j=i+1;
-      while(j<s.length&&(s[j]===" "||s[j]==="\n"||s[j]==="\r"||s[j]==="\t")) j++;
-      const next=s[j];
-      if(next===":"||next===","||next==="}"||next==="]"||next===undefined){
-        // aspa de fecho legítima
-        inStr=false; out+=ch; continue;
-      } else {
-        // aspa interna — escapar
-        out+='\\"'; continue;
-      }
-    }
-    out+=ch;
-  }
-  return out;
-}
-
 /* ── DISCLAIMER + RGPD ────────────────────────────────────────────────────── */
 function ClinicalDisclaimer({compact=false,t}) {
   const txt = t ? t("clinicalDisclaimer") : "⚕️ Aviso clínico: Esta ferramenta é um apoio à decisão e não substitui o julgamento clínico. A decisão final sobre a prescrição é sempre da responsabilidade do profissional de saúde. Os planos gerados devem ser revistos e adaptados a cada caso, e as referências científicas confirmadas antes de utilizadas. Não existem planos ideais — apenas planos adaptados ao contexto individual.";
@@ -918,7 +888,7 @@ function HistoryView({user,onOpenPlan,onRequireLogin,t,lang}) {
   const [loading,setLoading]=useState(true);
 
   useEffect(()=>{
-    if(!user){setLoading(false);return;}
+    if(!user)return;
     loadHistory(user.email).then(h=>{setHistory(h);setLoading(false);});
   },[user]);
 
@@ -1749,33 +1719,13 @@ JSON EXATO:
 {"exercises":[{"name":"","description":"","sets":"","reps":"","intensity":"","rest":"","frequency":"","objetivo":"","rationale":"","guideline":"","articleRef":"","articleLink":""}],"cuidados":["","","",""],"redFlags":["","",""],"yellowFlags":["","",""],"guidelinesUsed":[{"ref":"","url":""}],"sources":[{"name":"PubMed","url":"https://pubmed.ncbi.nlm.nih.gov"},{"name":"PEDro","url":"https://pedro.org.au"},{"name":"Cochrane","url":"https://cochranelibrary.com"}],"usedOwnGuidelines":${guidelines.length>0}}`;
 
     try {
-      const res=await fetch("https://api.anthropic.com/v1/messages",{
+      const res=await fetch("/api/generate-plan",{
         method:"POST",headers:{"Content-Type":"application/json"},
-        body:JSON.stringify({
-          model:"claude-sonnet-5",max_tokens:4000,
-          system:"Responde EXCLUSIVAMENTE com JSON válido e completo. Zero texto extra, zero markdown, zero backticks. JSON 100% bem formado. REGRA CRÍTICA: nunca uses aspas duplas (\") dentro dos valores de texto — se precisares de citar algo, usa aspas simples (') ou parênteses. As aspas duplas só podem delimitar as chaves e os valores do JSON.",
-          messages:[{role:"user",content:prompt}]
-        })
+        body:JSON.stringify({prompt})
       });
       const data=await res.json();
-      if(data.error)throw new Error(data.error.message);
-      let raw=(data.content||[]).map(b=>b.type==="text"?b.text:"").join("").trim();
-      let clean=raw.replace(/^```(?:json)?\s*/,"").replace(/\s*```$/,"").trim();
-      if(!clean.endsWith("}")){
-        clean=clean.replace(/,\s*"[^"]*"\s*:\s*[^,}\]]*$/,"");
-        const op=(clean.match(/\[/g)||[]).length-(clean.match(/\]/g)||[]).length;
-        const ob=(clean.match(/\{/g)||[]).length-(clean.match(/\}/g)||[]).length;
-        for(let i=0;i<op;i++)clean+="]";
-        for(let i=0;i<ob;i++)clean+="}";
-      }
-      let parsed;
-      try{
-        parsed=JSON.parse(clean);
-      }catch(parseErr){
-        // Tentativa de reparação: escapar aspas duplas que aparecem dentro de valores de texto
-        const repaired=repairJsonQuotes(clean);
-        parsed=JSON.parse(repaired); // se falhar outra vez, cai no catch exterior
-      }
+      if(data.error)throw new Error(data.error);
+      const parsed=data.result;
       // Cruzar cada exercício com o banco de exercícios (correspondência exata apenas)
       if(exerciseLibrary.length>0&&parsed.exercises){
         parsed.exercises=parsed.exercises.map(ex=>{
