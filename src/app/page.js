@@ -1723,48 +1723,52 @@ JSON EXATO:
   const logout=async()=>{ await getSupabaseClient().auth.signOut(); setUser(null); setUserMenu(false); setTab("prescricao"); };
 
   return (
-    <div style={{maxWidth:780,margin:"0 auto",fontFamily:"Arial,sans-serif",paddingBottom:40,background:"#fff",position:"relative"}}>
+    <div style={{fontFamily:"Arial,sans-serif",background:"#fff",position:"relative",minHeight:"100vh"}}>
       {authModal&&<AuthModal mode={authModal} onClose={()=>setAuthModal(null)} onAuth={()=>setAuthModal(null)} t={t} lang={lang}/>}
 
       {/* ── HEADER ── */}
-      <div style={{background:DARK,padding:"12px 20px",display:"flex",alignItems:"center",justifyContent:"space-between",flexWrap:"wrap",gap:10}}>
-        <Logo height={40}/>
-        <div style={{display:"flex",alignItems:"center",gap:10}}>
-          <LangSwitch lang={lang} onChange={changeLang}/>
-          {!user ? (
-            <>
-              <button onClick={()=>setAuthModal("register")} style={{background:"none",border:"1px solid #444",color:"#ddd",borderRadius:8,padding:"6px 14px",fontSize:12,cursor:"pointer",fontWeight:600}}>{t("register")}</button>
-              <button onClick={()=>setAuthModal("login")} style={{background:ORANGE,border:"none",color:"#fff",borderRadius:8,padding:"6px 16px",fontSize:12,cursor:"pointer",fontWeight:700}}>{t("login")}</button>
-            </>
-          ) : (
-            <div style={{position:"relative"}}>
-              <button onClick={()=>setUserMenu(m=>!m)} style={{display:"flex",alignItems:"center",gap:8,background:"none",border:"1px solid #444",borderRadius:8,padding:"5px 12px",cursor:"pointer"}}>
-                <span style={{width:24,height:24,borderRadius:"50%",background:ORANGE,color:"#fff",display:"flex",alignItems:"center",justifyContent:"center",fontSize:12,fontWeight:700}}>{(user.name||user.email)[0].toUpperCase()}</span>
-                <span style={{color:"#ddd",fontSize:12,fontWeight:600}}>{user.name}</span>
-                <span style={{color:"#888",fontSize:9}}>▼</span>
-              </button>
-              {userMenu&&(
-                <div style={{position:"absolute",top:"110%",right:0,background:"#fff",borderRadius:10,boxShadow:"0 6px 20px rgba(0,0,0,0.2)",padding:"8px",minWidth:180,zIndex:50}}>
-                  <div style={{padding:"6px 10px",borderBottom:"1px solid #eee",marginBottom:4}}>
-                    <div style={{fontSize:12,fontWeight:700}}>{user.name}</div>
-                    <div style={{fontSize:11,color:"#888"}}>{user.email}</div>
+      <div style={{background:DARK}}>
+        <div style={{maxWidth:1100,margin:"0 auto",padding:"12px 20px",display:"flex",alignItems:"center",justifyContent:"space-between",flexWrap:"wrap",gap:10}}>
+          <Logo height={40}/>
+          <div style={{display:"flex",alignItems:"center",gap:10}}>
+            <LangSwitch lang={lang} onChange={changeLang}/>
+            {!user ? (
+              <>
+                <button onClick={()=>setAuthModal("register")} style={{background:"none",border:"1px solid #444",color:"#ddd",borderRadius:8,padding:"6px 14px",fontSize:12,cursor:"pointer",fontWeight:600}}>{t("register")}</button>
+                <button onClick={()=>setAuthModal("login")} style={{background:ORANGE,border:"none",color:"#fff",borderRadius:8,padding:"6px 16px",fontSize:12,cursor:"pointer",fontWeight:700}}>{t("login")}</button>
+              </>
+            ) : (
+              <div style={{position:"relative"}}>
+                <button onClick={()=>setUserMenu(m=>!m)} style={{display:"flex",alignItems:"center",gap:8,background:"none",border:"1px solid #444",borderRadius:8,padding:"5px 12px",cursor:"pointer"}}>
+                  <span style={{width:24,height:24,borderRadius:"50%",background:ORANGE,color:"#fff",display:"flex",alignItems:"center",justifyContent:"center",fontSize:12,fontWeight:700}}>{(user.name||user.email)[0].toUpperCase()}</span>
+                  <span style={{color:"#ddd",fontSize:12,fontWeight:600}}>{user.name}</span>
+                  <span style={{color:"#888",fontSize:9}}>▼</span>
+                </button>
+                {userMenu&&(
+                  <div style={{position:"absolute",top:"110%",right:0,background:"#fff",borderRadius:10,boxShadow:"0 6px 20px rgba(0,0,0,0.2)",padding:"8px",minWidth:180,zIndex:50}}>
+                    <div style={{padding:"6px 10px",borderBottom:"1px solid #eee",marginBottom:4}}>
+                      <div style={{fontSize:12,fontWeight:700}}>{user.name}</div>
+                      <div style={{fontSize:11,color:"#888"}}>{user.email}</div>
+                    </div>
+                    <button onClick={logout} style={{width:"100%",textAlign:"left",background:"none",border:"none",padding:"7px 10px",fontSize:12,color:"#c0392b",cursor:"pointer",borderRadius:6}}>{t("logout")}</button>
                   </div>
-                  <button onClick={logout} style={{width:"100%",textAlign:"left",background:"none",border:"none",padding:"7px 10px",fontSize:12,color:"#c0392b",cursor:"pointer",borderRadius:6}}>{t("logout")}</button>
-                </div>
-              )}
-            </div>
-          )}
+                )}
+              </div>
+            )}
+          </div>
         </div>
       </div>
 
       {/* ── MAIN TABS ── */}
-      <div style={{display:"flex",borderBottom:`2px solid ${DARK}`,flexWrap:"wrap"}}>
-        {[["prescricao",t("navPrescricao")],["historico",t("navHistorico")],...(isAdminUser?[["admin",t("navAdmin")]]:[])].map(([k,l])=>(
-          <button key={k} onClick={()=>setTab(k)} style={{padding:"9px 14px",border:"none",background:tab===k?ORANGE:GRAY,color:tab===k?"#fff":"#555",fontWeight:tab===k?700:400,cursor:"pointer",fontSize:13,borderBottom:tab===k?`2px solid ${ORANGE}`:"none",marginBottom:-2}}>{l}</button>
-        ))}
+      <div style={{borderBottom:`2px solid ${DARK}`}}>
+        <div style={{maxWidth:1100,margin:"0 auto",display:"flex",flexWrap:"wrap"}}>
+          {[["prescricao",t("navPrescricao")],["historico",t("navHistorico")],...(isAdminUser?[["admin",t("navAdmin")]]:[])].map(([k,l])=>(
+            <button key={k} onClick={()=>setTab(k)} style={{padding:"9px 14px",border:"none",background:tab===k?ORANGE:GRAY,color:tab===k?"#fff":"#555",fontWeight:tab===k?700:400,cursor:"pointer",fontSize:13,borderBottom:tab===k?`2px solid ${ORANGE}`:"none",marginBottom:-2}}>{l}</button>
+          ))}
+        </div>
       </div>
 
-      <div style={{padding:"18px 16px"}}>
+      <div style={{maxWidth:900,margin:"0 auto",padding:"18px 16px"}}>
         {tab==="admin"&&isAdminUser&&(
             <div>
               <div style={{display:"flex",gap:6,marginBottom:12}}>
@@ -1868,7 +1872,7 @@ JSON EXATO:
       </div>
 
       {/* ── RODAPÉ GLOBAL ── */}
-      <div style={{borderTop:"1px solid #eee",padding:"14px 18px",marginTop:10,textAlign:"center"}}>
+      <div style={{maxWidth:900,margin:"0 auto",borderTop:"1px solid #eee",padding:"14px 18px 40px",marginTop:10,textAlign:"center"}}>
         <div style={{fontSize:10,color:"#aaa",lineHeight:1.5}}>
           <b style={{color:"#999"}}>Physio Planner</b> · {t("footerTagline")}
           <br/>{t("footerDisclaimer")}
