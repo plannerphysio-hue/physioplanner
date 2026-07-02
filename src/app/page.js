@@ -336,6 +336,19 @@ function extractPMID(link){
 }
 
 // Returns {status:"verified"|"mismatch"|"notfound"|"nopmid"|"error", title, authors, year, journal, pmid}
+// Segunda camada de verificação: o autor/ano pode bater certo num PMID real e mesmo
+// assim o artigo ser completamente irrelevante (ex: um PMID de "Li Y 2021" existe mesmo,
+// mas pode ser sobre nanomateriais em vez de fisioterapia). Author+year sozinho não prova
+// relevância clínica — por isso confirmamos também que o título/revista pertence a um
+// domínio clínico/MSK plausível antes de mostrar "Verificado".
+const CLINICAL_KEYWORDS=["medic","clin","therap","physio","rehab","orthop","spine","spinal","muscul","skeletal","joint","tendon","ligament","bone","sport","athlet","arthrit","pain","injury","trauma","surg","exercise","physical activity","health","patient","disabil","function","manual therapy","chiropract","kinesio","biomechan","gait","posture","strength training","bmj","jama","lancet","cochrane","plos","jospt","bjsm","pm&r","physiother","annals of internal medicine","ann intern med"];
+const NON_CLINICAL_KEYWORDS=["material","chemistry","chemical","nanocluster","nanoparticle","polymer","quantum","astrophys","astronom","geoscien","geolog","computer science","algorithm","semiconductor","photonic","catalysis","crystall","spectroscop","electronic","circuit","robotic","genom","botan","zoolog","agricultur","astronomy"];
+function looksClinicallyRelevant(journal,title){
+  const text=`${journal} ${title}`.toLowerCase();
+  if(NON_CLINICAL_KEYWORDS.some(k=>text.includes(k))) return false;
+  return CLINICAL_KEYWORDS.some(k=>text.includes(k));
+}
+
 async function validatePMID(pmid, citedRef){
   if(!pmid) return {status:"nopmid"};
   try{
@@ -365,6 +378,11 @@ async function validatePMID(pmid, citedRef){
       }
     } else {
       // Sem referência citada para comparar — não conseguimos confirmar correspondência
+      status="mismatch";
+    }
+    // Segunda verificação: mesmo com autor/ano corretos, rejeita se o artigo não parecer
+    // clinicamente relevante (apanha PMIDs reais mas de áreas completamente distintas).
+    if(status==="verified"&&!looksClinicallyRelevant(journal,title)){
       status="mismatch";
     }
     return {status,pmid,title,year,journal,firstAuthor};
@@ -1685,8 +1703,7 @@ INSTRUÇÕES:
 - Campo "rationale": 1 frase justificando clinicamente o exercício
 - Campo "guideline": nome da guideline ou artigo que suporta (ex: "NICE 2016", "Cochrane 2021")
 - Descrições: máx 2 frases curtas
-- IMPORTANTE — REFERÊNCIAS (regra crítica de fiabilidade): só inclui "articleLink" quando tiveres ALTA confiança de que o PMID é real e corresponde exatamente ao artigo citado. Na dúvida, deixa "articleLink" e "articleRef" VAZIOS — é MUITO melhor não ter referência do que ter uma referência inventada. Cada referência será verificada automaticamente contra a base oficial do PubMed e as que não existirem serão removidas. Não percas tempo a inventar: prefere referências de guidelines amplamente conhecidas (NICE, JOSPT, Cochrane) cujos PMID conheces com certeza, ou deixa vazio.
-- Preferência: é aceitável que vários exercícios fiquem sem "articleLink". O campo "guideline" (texto, ex: "NICE 2016") pode ser preenchido mesmo sem PMID.
+- REFERÊNCIAS: tenta ativamente incluir "articleLink" (PMID) sempre que te lembrares de um artigo, revisão sistemática ou guideline amplamente conhecido e relevante para o exercício (ex: revisões Cochrane, guidelines NICE, estudos frequentemente citados em JOSPT/BJSM) — não fiques bloqueado à espera de certeza absoluta. Cada referência é verificada automaticamente contra a base oficial do PubMed a seguir e removida se não corresponder, por isso um PMID específico e plausível vale mais tentado do que evitado. A única regra rígida: nunca inventes um número de PMID — se não te lembrares de um específico para aquele exercício, deixa "articleLink" e "articleRef" vazios em vez de adivinhar. O campo "guideline" (texto, ex: "NICE 2016") deve ser sempre preenchido, com ou sem PMID.
 - Adapta à profissão, género e comorbilidades
 
 JSON EXATO:
